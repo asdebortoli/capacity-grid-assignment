@@ -23,13 +23,19 @@ function deferredResponse() {
   return { promise, resolve }
 }
 async function edit(value: string) {
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit weekly capacity for Dee Okafor' }))
+  fireEvent.click(await screen.findByRole('button', { name: /^Edit weekly capacity for Dee Okafor:/ }))
   fireEvent.change(screen.getByRole('spinbutton', { name: 'Hours per week' }), { target: { value } })
 }
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('weekly capacity editing', () => {
+  it('includes the visible hours and person in the edit button name', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(data())))
+    render(<CapacityGrid {...initialRange} />)
+    expect(await screen.findByRole('button', { name: 'Edit weekly capacity for Dee Okafor: 40 h / week' })).toBeTruthy()
+  })
+
   it('saves decimals once, then waits for server totals before showing updated capacity', async () => {
     const patch = deferredResponse()
     const refresh = deferredResponse()
@@ -52,7 +58,7 @@ describe('weekly capacity editing', () => {
     await act(async () => refresh.resolve(json(data(32.5))))
     expect(await screen.findByRole('cell', { name: /^28 \/ 19\.5 h\s*8\.5 h over$/ })).toBeTruthy()
     expect(screen.queryByRole('spinbutton')).toBeNull()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit weekly capacity for Dee Okafor' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Edit weekly capacity for Dee Okafor:/ }))
   })
 
   it.each(['', '-1', '121'])('rejects invalid hours %j without a PATCH', async (value) => {
@@ -72,8 +78,8 @@ describe('weekly capacity editing', () => {
     await edit('32.5')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('spinbutton')).toBeNull()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit weekly capacity for Dee Okafor' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Edit weekly capacity for Dee Okafor' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Edit weekly capacity for Dee Okafor:/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Edit weekly capacity for Dee Okafor:/ }))
     expect((screen.getByRole('spinbutton') as HTMLInputElement).value).toBe('40')
     fireEvent.keyDown(screen.getByRole('spinbutton'), { key: 'Escape' })
     expect(screen.queryByRole('spinbutton')).toBeNull()

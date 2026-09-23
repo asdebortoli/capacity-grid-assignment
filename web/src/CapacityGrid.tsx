@@ -133,7 +133,7 @@ function PersonRow({ person, weeks, onEdit, editingDisabled }: {
     <TableCell className="weekly-column">
       <Button variant="ghost" className="-ml-2 tabular-nums" disabled={editingDisabled}
         data-edit-person={person.id}
-        aria-label={`Edit weekly capacity for ${person.name}`} onClick={() => onEdit(person)}>
+        aria-label={`Edit weekly capacity for ${person.name}: ${formatHours(person.weeklyHours)} h / week`} onClick={() => onEdit(person)}>
         {formatHours(person.weeklyHours)} <span className="text-xs font-normal text-muted-foreground">h / week</span>
         <Pencil className="size-3 text-muted-foreground" aria-hidden="true" />
       </Button>
