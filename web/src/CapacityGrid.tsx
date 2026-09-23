@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
-import { LoaderCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { LoaderCircle, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { cellStatus, fetchCapacity, formatHours, type CapacityResponse, type CapacityWeek, type PersonCapacity } from '@/lib/capacity'
+import { cellStatus, fetchCapacity, formatHours, updateWeeklyHours, type CapacityResponse, type CapacityWeek, type PersonCapacity } from '@/lib/capacity'
 import { formatDate } from '@/lib/dates'
+import { WeeklyCapacityEditor } from './WeeklyCapacityEditor'
 
 type Props = { from: string; to: string }
 type LoadState =
@@ -12,9 +13,13 @@ type LoadState =
   | { key: string; status: 'ready'; data: CapacityResponse }
 
 export function CapacityGrid({ from, to }: Props) {
-  const key = `${from}:${to}`
-  const [state, setState] = useState<LoadState>({ key, status: 'loading' })
   const [retry, setRetry] = useState(0)
+  const key = `${from}:${to}:${retry}`
+  const [state, setState] = useState<LoadState>({ key, status: 'loading' })
+  const [editing, setEditing] = useState<PersonCapacity | null>(null)
+  const [saved, setSaved] = useState<{ name: string; weeklyHours: number } | null>(null)
+  const grid = useRef<HTMLDivElement>(null)
+  const returnFocusTo = useRef<number | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -29,16 +34,61 @@ export function CapacityGrid({ from, to }: Props) {
     return () => { active = false; controller.abort() }
   }, [from, to, key, retry])
 
-  // A changed range must never briefly display the previous range's numbers.
-  if (state.key !== key || state.status === 'loading') {
+  // Hide old numbers immediately after a range change or a successful save.
+  const current: LoadState = state.key === key ? state : { key, status: 'loading' }
+
+  useEffect(() => {
+    if (!editing && current.status === 'ready' && returnFocusTo.current !== null) {
+      grid.current?.querySelector<HTMLButtonElement>(`[data-edit-person="${returnFocusTo.current}"]`)?.focus({ preventScroll: true })
+      returnFocusTo.current = null
+    }
+  }, [editing, current.status])
+
+  async function save(weeklyHours: number) {
+    if (!editing) return
+    await updateWeeklyHours(editing.id, weeklyHours)
+    setSaved({ name: editing.name, weeklyHours })
+    setEditing(null)
+    // Incrementing a revision refetches whichever range is current when the
+    // PATCH completes, even if the user navigated during the save.
+    setRetry((value) => value + 1)
+  }
+
+  return <div ref={grid} className="space-y-4">
+    {editing && <WeeklyCapacityEditor key={editing.id} person={editing} onSave={save} onCancel={() => setEditing(null)} />}
+    {saved && current.status !== 'error' && <p role="status" className="text-sm text-primary">
+      Weekly capacity for <bdi>{saved.name}</bdi> saved at {formatHours(saved.weeklyHours)} h/week.
+      {current.status === 'loading' ? ' Refreshing the grid…' : ''}
+    </p>}
+    <CapacityContent state={current} saved={!!saved} onRetry={() => setRetry((value) => value + 1)}
+      editingDisabled={editing !== null} onEdit={(person) => {
+        returnFocusTo.current = person.id
+        setSaved(null)
+        setEditing(person)
+      }} />
+  </div>
+}
+
+type ContentProps = {
+  state: LoadState
+  saved: boolean
+  onRetry: () => void
+  onEdit: (person: PersonCapacity) => void
+  editingDisabled: boolean
+}
+
+function CapacityContent({ state, saved, onRetry, onEdit, editingDisabled }: ContentProps) {
+  if (state.status === 'loading') {
     return <div role="status" className="flex min-h-60 items-center justify-center gap-2 rounded-xl border bg-card text-sm text-muted-foreground">
       <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" /> Loading capacity…
     </div>
   }
   if (state.status === 'error') {
     return <div className="rounded-xl border bg-card p-6">
-      <p role="alert" className="mb-4 text-sm text-destructive">{state.message}</p>
-      <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>Retry loading capacity</Button>
+      <p role="alert" className="mb-4 text-sm text-destructive">
+        {saved ? 'Weekly capacity was saved, but the grid could not be refreshed. ' : ''}{state.message}
+      </p>
+      <Button variant="outline" onClick={onRetry}>Retry loading capacity</Button>
     </div>
   }
   const { people, weeks } = state.data
@@ -67,18 +117,27 @@ export function CapacityGrid({ from, to }: Props) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {people.map((person) => <PersonRow key={person.id} person={person} weeks={weeks} />)}
+          {people.map((person) => <PersonRow key={person.id} person={person} weeks={weeks} onEdit={onEdit} editingDisabled={editingDisabled} />)}
         </TableBody>
       </Table>
     </div>
   )
 }
 
-function PersonRow({ person, weeks }: { person: PersonCapacity; weeks: CapacityWeek[] }) {
+function PersonRow({ person, weeks, onEdit, editingDisabled }: {
+  person: PersonCapacity; weeks: CapacityWeek[]; onEdit: (person: PersonCapacity) => void; editingDisabled: boolean
+}) {
   const cells = new Map(person.weeks.map((cell) => [cell.weekStart, cell]))
   return <TableRow>
     <th scope="row" className="person-column text-left font-medium"><bdi>{person.name}</bdi></th>
-    <TableCell className="weekly-column text-muted-foreground">{formatHours(person.weeklyHours)} <span className="text-xs">h / week</span></TableCell>
+    <TableCell className="weekly-column">
+      <Button variant="ghost" className="-ml-2 tabular-nums" disabled={editingDisabled}
+        data-edit-person={person.id}
+        aria-label={`Edit weekly capacity for ${person.name}`} onClick={() => onEdit(person)}>
+        {formatHours(person.weeklyHours)} <span className="text-xs font-normal text-muted-foreground">h / week</span>
+        <Pencil className="size-3 text-muted-foreground" aria-hidden="true" />
+      </Button>
+    </TableCell>
     {weeks.map((week) => {
       const cell = cells.get(week.weekStart)
       if (!cell) return <TableCell key={week.weekStart}>Unavailable</TableCell>
